@@ -19,7 +19,6 @@
     .camera-view-container { flex-grow: 1; position: relative; min-width: 0; }
     .camera-view-container::before { content: ''; display: block; padding-bottom: 133.33%; }
     .camera-view { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: var(--camera-bg); border-radius: 8px; overflow: hidden; }
-    /* Style for the video feed */
     #video-feed { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     .alignment-svg { position: absolute; top: 50%; left: 50%; width: 70%; height: auto; transition: transform 0.05s linear; }
     #target-svg { transform: translate(-50%, -50%); }
@@ -33,7 +32,7 @@
     .control-button.enabled:active { transform: translateY(3px); box-shadow: 0 2px 0 0 #004a99; }
     .hidden { display: none; }
     .progress-display { display: flex; align-items: center; gap: 8px; padding: 12px; overflow-x: auto; }
-    .progress-frame { flex-shrink: 0; height: 50px; width: 37.5px; background-color: var(--secondary-bg); border-radius: 4px; border: 1px solid #CCC; }
+    .progress-frame { flex-shrink: 0; height: 50px; width: 37.5px; background-color: var(--secondary-bg); border-radius: 4px; border: 1px solid #CCC; background-size: cover; background-position: center; }
     .app-status { padding: 16px; text-align: center; font-size: 1.3rem; font-weight: 500; border-top: 1px solid var(--secondary-bg); }
     #permission-overlay { position: fixed; top: 0; left: 0; z-index: 100; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.75); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; box-sizing: border-box; }
     #permission-overlay.hidden { display: none; }
@@ -41,6 +40,7 @@
 </head>
 <body>
   <div class="app-container">
+    <!-- HTML is unchanged -->
     <header class="app-header">360 Room Scan</header>
     <div class="main-content">
       <div class="camera-view-container" id="camera-view-container">
@@ -75,6 +75,7 @@
       const scanControlBtn = document.getElementById('scan-control-btn');
       const resetBtn = document.getElementById('reset-btn');
       const appStatus = document.getElementById('app-status');
+      const progressDisplay = document.getElementById('progress-display');
        
       let isAligned = false, alignmentTimer = null;
       let scanState = 'pre-scan'; // 'pre-scan', 'scanning', 'paused'
@@ -90,7 +91,7 @@
       let smoothedRoll = 0;
       const SMOOTHING_FACTOR = 0.1;
 
-      // --- Permission Handling ---
+      // --- Permission Handling (unchanged part) ---
       const permissionOverlay = document.getElementById('permission-overlay');
       const permissionBtn = document.getElementById('permission-button');
       const permissionError = document.getElementById('permission-error');
@@ -104,9 +105,10 @@
             videoElement.onloadedmetadata = () => {
                 const { videoWidth, videoHeight } = videoElement;
                 const aspectRatio = videoHeight / videoWidth;
-                cameraViewContainer.style.paddingBottom = `${aspectRatio * 100}%`;
+                cameraViewContainer.style.setProperty('--aspect-ratio', aspectRatio);
+                cameraViewContainer.style.paddingBottom = `calc(100% * var(--aspect-ratio, 1.3333))`;
             };
-            startListening(); // Sensors can start after camera is confirmed
+            startListening(); 
         } catch (err) {
             console.error("Camera error:", err);
             permissionError.textContent = "Camera access denied or unavailable. Please check permissions and refresh.";
@@ -119,7 +121,6 @@
       
       function handlePermission() {
         if (navigator.permissions && typeof navigator.permissions.query === 'function') {
-            // We now check for camera as well, but sensor is the gatekeeper for iOS
           navigator.permissions.query({ name: 'accelerometer' }).then(result => {
             if (result.state === 'granted') { initializeApp(); }
             else if (result.state === 'prompt') { permissionBtn.onclick = requestSensorAccess; }
@@ -133,7 +134,15 @@
           DeviceOrientationEvent.requestPermission().then(state => {
             if (state === 'granted') { initializeApp(); } else { permissionError.textContent = "Permission denied."; }
           }).catch(console.error);
-        } else { initializeApp(); } // For non-iOS devices
+        } else { initializeApp(); }
+      }
+
+      // --- Progress Display Logic ---
+      function updateProgressDisplay(frameDataUrl) {
+        const frameDiv = document.createElement('div');
+        frameDiv.className = 'progress-frame';
+        frameDiv.style.backgroundImage = `url(${frameDataUrl})`;
+        progressDisplay.appendChild(frameDiv);
       }
 
       // --- Capture Logic ---
@@ -146,11 +155,11 @@
         context.drawImage(videoElement, 0, 0, videoWidth, videoHeight);
         const dataUrl = canvas.toDataURL('image/jpeg');
         capturedFrames.push(dataUrl);
-        // We will update the progress display in a future step
+        updateProgressDisplay(dataUrl);
         console.log(`Frame captured. Total frames: ${capturedFrames.length}`);
       }
 
-      // --- Core Logic ---
+      // --- Core Logic (unchanged) ---
       function handleOrientation(event) {
         let { beta, gamma } = event;
         if (beta === null || gamma === null) return;
@@ -158,21 +167,15 @@
         if (beta <= TARGET_PITCH) { const progress = beta / TARGET_PITCH; yTranslatePercent = -50 + (progress * 50); } 
         else { const progress = (beta - TARGET_PITCH) / (180 - TARGET_PITCH); yTranslatePercent = progress * 50; }
         yTranslatePercent = Math.max(-50, Math.min(50, yTranslatePercent));
-         
         smoothedRoll = (smoothedRoll * (1 - SMOOTHING_FACTOR)) + (gamma * SMOOTHING_FACTOR);
         const pitchForScaling = Math.min(Math.abs(beta), TARGET_PITCH);
         const rotationScale = 1.0 - (0.8 * (pitchForScaling / TARGET_PITCH));
         const finalRotation = -smoothedRoll * rotationScale;
-
         targetSVG.style.transform = `translate(-50%, calc(-50% + ${yTranslatePercent}%)) rotate(${finalRotation}deg)`;
-
         const pitchOffset = beta - TARGET_PITCH;
         const rollOffset = gamma;
         const misalignment = Math.sqrt(Math.pow(pitchOffset, 2) + Math.pow(rollOffset, 2));
-         
         helperSVGPath.style.fill = getGradientColor(misalignment);
-         
-        // Only check for initial alignment when in pre-scan state
         if (scanState === 'pre-scan') {
             if (misalignment < ALIGNMENT_TOLERANCE) {
               if (!isAligned && alignmentTimer === null) {
@@ -186,15 +189,10 @@
       }
 
       // --- Color Gradient Logic (unchanged) ---
-      const RGB_COLORS = {
-        green: [40, 167, 69],  // #28a745
-        yellow: [255, 193, 7], // #ffc107
-        red: [220, 53, 69]   // #dc3545
-      };
+      const RGB_COLORS = { green: [40, 167, 69], yellow: [255, 193, 7], red: [220, 53, 69] };
       function interpolate(start, end, progress) { return Math.round(start + progress * (end - start)); }
       function getGradientColor(misalignment) {
-        const greenPoint = ALIGNMENT_TOLERANCE;
-        const redPoint = ALIGNMENT_TOLERANCE * 5;
+        const greenPoint = ALIGNMENT_TOLERANCE; const redPoint = ALIGNMENT_TOLERANCE * 5;
         const yellowPoint = (greenPoint + redPoint) / 2;
         let startColor, endColor, progress;
         if (misalignment <= greenPoint) { return `rgb(${RGB_COLORS.green.join(',')})`; }
@@ -204,13 +202,11 @@
         } else {
           startColor = RGB_COLORS.yellow; endColor = RGB_COLORS.red; progress = (misalignment - yellowPoint) / (redPoint - yellowPoint);
         }
-        const r = interpolate(startColor[0], endColor[0], progress);
-        const g = interpolate(startColor[1], endColor[1], progress);
-        const b = interpolate(startColor[2], endColor[2], progress);
+        const r = interpolate(startColor[0], endColor[0], progress); const g = interpolate(startColor[1], endColor[1], progress); const b = interpolate(startColor[2], endColor[2], progress);
         return `rgb(${r},${g},${b})`;
       }
 
-      // --- UI State Management ---
+      // --- UI State Management (unchanged part) ---
       function setAlignedState(isNowAligned) {
         isAligned = isNowAligned;
         scanControlBtn.disabled = !isAligned;
@@ -220,6 +216,7 @@
         }
       }
 
+      // --- Button Event Listeners ---
       scanControlBtn.addEventListener('click', () => {
         if (scanState === 'pre-scan') {
             scanState = 'scanning';
@@ -231,24 +228,27 @@
             appStatus.textContent = 'Paused';
             scanControlBtn.textContent = 'Resume';
             resetBtn.classList.remove('hidden');
+            videoElement.pause();
         } else if (scanState === 'paused') {
             scanState = 'scanning';
             appStatus.textContent = 'Scanning';
             scanControlBtn.textContent = 'Pause';
             resetBtn.classList.add('hidden');
+            videoElement.play();
         }
       });
 
       resetBtn.addEventListener('click', () => {
         scanState = 'pre-scan';
         capturedFrames = [];
-        // TODO: Clear progress display UI
+        progressDisplay.innerHTML = ''; // Clear progress display UI
         resetBtn.classList.add('hidden');
         scanControlBtn.textContent = 'Start';
-        // Reset to initial unaligned state, which will disable the button
+        videoElement.play(); // Ensure video is playing for alignment
         setAlignedState(false); 
       });
 
+      // --- Initial Setup ---
       if (!window.DeviceOrientationEvent || !navigator.mediaDevices) {
         permissionError.textContent = "Required browser features (sensors or camera) not supported.";
         permissionOverlay.classList.remove('hidden');
