@@ -106,9 +106,7 @@
       
       async function initializeApp() {
         try {
-            videoStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' }
-            });
+            videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
             videoElement.srcObject = videoStream;
             videoElement.onloadedmetadata = () => {
                 const { videoWidth, videoHeight } = videoElement;
@@ -124,9 +122,7 @@
             permissionOverlay.classList.remove('hidden');
         }
       }
-
       function startListening() { window.addEventListener('deviceorientation', handleOrientation); permissionOverlay.classList.add('hidden'); }
-      
       function handlePermission() {
         if (navigator.permissions && typeof navigator.permissions.query === 'function') {
           navigator.permissions.query({ name: 'accelerometer' }).then(result => {
@@ -136,7 +132,6 @@
           });
         } else { permissionBtn.onclick = requestSensorAccess; }
       }
-
       function requestSensorAccess() {
         if (typeof DeviceOrientationEvent.requestPermission === 'function') {
           DeviceOrientationEvent.requestPermission().then(state => {
@@ -145,10 +140,15 @@
         } else { initializeApp(); }
       }
       
-      // --- Progress Display & Capture Logic (unchanged from previous correct version) ---
+      // --- Other Functions (Unchanged) ---
       function updateProgressDisplay(frameDataUrl) { const frameDiv = document.createElement('div'); frameDiv.className = 'progress-frame'; frameDiv.style.backgroundImage = `url(${frameDataUrl})`; progressDisplay.appendChild(frameDiv); progressDisplay.scrollLeft = progressDisplay.scrollWidth; }
       function completeScan() { scanState = 'complete'; appStatus.textContent = 'Complete'; videoElement.pause(); scanningControls.classList.add('hidden'); scanCompleteControls.classList.remove('hidden'); }
-      function captureFrame() { if (!videoStream || scanState !== 'scanning') return; const { videoWidth, videoHeight } = videoElement; canvas.width = videoWidth; canvas.height = videoHeight; const context = canvas.getContext('2d'); context.drawImage(videoElement, 0, 0, videoWidth, videoHeight); const dataUrl = canvas.toDataURL('image/jpeg'); capturedFrames.push(dataUrl); updateProgressDisplay(dataUrl); console.log(`Frame ${capturedFrames.length}/${TOTAL_FRAMES} captured.`); if (alignmentTimer) { clearTimeout(alignmentTimer); alignmentTimer = null; } isAligned = false; appStatus.textContent = 'Scanning'; if (capturedFrames.length >= TOTAL_FRAMES) { completeScan(); } }
+      function captureFrame() { if (!videoStream || scanState !== 'scanning') return; const { videoWidth, videoHeight } = videoElement; canvas.width = videoWidth; canvas.height = videoHeight; const context = canvas.getContext('2d'); context.drawImage(videoElement, 0, 0, videoWidth, videoHeight); const dataUrl = canvas.toDataURL('image/jpeg'); capturedFrames.push(dataUrl); updateProgressDisplay(dataUrl); if (alignmentTimer) { clearTimeout(alignmentTimer); alignmentTimer = null; } isAligned = false; appStatus.textContent = 'Scanning'; if (capturedFrames.length >= TOTAL_FRAMES) { completeScan(); } }
+      const RGB_COLORS = { green: [40, 167, 69], yellow: [255, 193, 7], red: [220, 53, 69] };
+      function interpolate(start, end, progress) { return Math.round(start + progress * (end - start)); }
+      function getGradientColor(misalignment) { const greenPoint = ALIGNMENT_TOLERANCE; const redPoint = ALIGNMENT_TOLERANCE * 5; const yellowPoint = (greenPoint + redPoint) / 2; let startColor, endColor, progress; if (misalignment <= greenPoint) { return `rgb(${RGB_COLORS.green.join(',')})`; } if (misalignment >= redPoint) { return `rgb(${RGB_COLORS.red.join(',')})`; } if (misalignment < yellowPoint) { startColor = RGB_COLORS.green; endColor = RGB_COLORS.yellow; progress = (misalignment - greenPoint) / (yellowPoint - greenPoint); } else { startColor = RGB_COLORS.yellow; endColor = RGB_COLORS.red; progress = (misalignment - yellowPoint) / (redPoint - yellowPoint); } const r = interpolate(startColor[0], endColor[0], progress); const g = interpolate(startColor[1], endColor[1], progress); const b = interpolate(startColor[2], endColor[2], progress); return `rgb(${r},${g},${b})`; }
+      function setAlignedState(isNowAligned) { if (scanState !== 'pre-scan') return; isAligned = isNowAligned; scanControlBtn.disabled = !isNowAligned; scanControlBtn.classList.toggle('enabled', isNowAligned); appStatus.textContent = isNowAligned ? 'Ready to Start' : 'Align to Start'; }
+      function resetScan() { scanState = 'pre-scan'; capturedFrames = []; initialYaw = null; if (alignmentTimer) { clearTimeout(alignmentTimer); alignmentTimer = null; } progressDisplay.innerHTML = ''; resetBtn.classList.add('hidden'); scanCompleteControls.classList.add('hidden'); scanningControls.classList.remove('hidden'); scanControlBtn.textContent = 'Start'; videoElement.play(); setAlignedState(false); }
 
       // --- Core Logic ---
       function handleOrientation(event) {
@@ -176,11 +176,16 @@
             yawError = alpha - targetYaw;
             if (yawError > 180) yawError -= 360;
             if (yawError < -180) yawError += 360;
-            
             xTranslatePercent = -yawError * YAW_SENSITIVITY;
         }
 
-        targetSVG.style.transform = `translate(calc(-50% + ${xTranslatePercent}%), calc(-50% + ${yTranslatePercent}%)) rotate(${finalRotation}deg)`;
+        const finalRotationRad = finalRotation * Math.PI / 180;
+        const cosR = Math.cos(finalRotationRad);
+        const sinR = Math.sin(finalRotationRad);
+        const tx = xTranslatePercent * cosR + yTranslatePercent * sinR;
+        const ty = -xTranslatePercent * sinR + yTranslatePercent * cosR;
+        
+        targetSVG.style.transform = `translate(calc(-50% + ${tx}%), calc(-50% + ${ty}%)) rotate(${finalRotation}deg)`;
         const misalignment = Math.sqrt(Math.pow(pitchOffset, 2) + Math.pow(rollOffset, 2) + Math.pow(yawError, 2));
         helperSVGPath.style.fill = getGradientColor(misalignment);
          
@@ -206,19 +211,10 @@
         }
       }
 
-      // --- Color Gradient & UI State (unchanged from previous correct version) ---
-      const RGB_COLORS = { green: [40, 167, 69], yellow: [255, 193, 7], red: [220, 53, 69] };
-      function interpolate(start, end, progress) { return Math.round(start + progress * (end - start)); }
-      function getGradientColor(misalignment) { const greenPoint = ALIGNMENT_TOLERANCE; const redPoint = ALIGNMENT_TOLERANCE * 5; const yellowPoint = (greenPoint + redPoint) / 2; let startColor, endColor, progress; if (misalignment <= greenPoint) { return `rgb(${RGB_COLORS.green.join(',')})`; } if (misalignment >= redPoint) { return `rgb(${RGB_COLORS.red.join(',')})`; } if (misalignment < yellowPoint) { startColor = RGB_COLORS.green; endColor = RGB_COLORS.yellow; progress = (misalignment - greenPoint) / (yellowPoint - greenPoint); } else { startColor = RGB_COLORS.yellow; endColor = RGB_COLORS.red; progress = (misalignment - yellowPoint) / (redPoint - yellowPoint); } const r = interpolate(startColor[0], endColor[0], progress); const g = interpolate(startColor[1], endColor[1], progress); const b = interpolate(startColor[2], endColor[2], progress); return `rgb(${r},${g},${b})`; }
-      function setAlignedState(isNowAligned) { if (scanState !== 'pre-scan') return; isAligned = isNowAligned; scanControlBtn.disabled = !isNowAligned; scanControlBtn.classList.toggle('enabled', isNowAligned); appStatus.textContent = isNowAligned ? 'Ready to Start' : 'Align to Start'; }
-
-      // --- Button Event Listeners (unchanged from previous correct version) ---
+      // --- Button Event Listeners & Initial Setup ---
       scanControlBtn.addEventListener('click', () => { if (scanState === 'pre-scan') { scanState = 'scanning'; captureFrame(); scanControlBtn.textContent = 'Pause'; } else if (scanState === 'scanning') { scanState = 'paused'; appStatus.textContent = 'Paused'; scanControlBtn.textContent = 'Resume'; resetBtn.classList.remove('hidden'); videoElement.pause(); } else if (scanState === 'paused') { scanState = 'scanning'; appStatus.textContent = 'Scanning'; scanControlBtn.textContent = 'Pause'; resetBtn.classList.add('hidden'); videoElement.play(); } });
-      function resetScan() { scanState = 'pre-scan'; capturedFrames = []; initialYaw = null; if (alignmentTimer) { clearTimeout(alignmentTimer); alignmentTimer = null; } progressDisplay.innerHTML = ''; resetBtn.classList.add('hidden'); scanCompleteControls.classList.add('hidden'); scanningControls.classList.remove('hidden'); scanControlBtn.textContent = 'Start'; videoElement.play(); setAlignedState(false); }
       resetBtn.addEventListener('click', resetScan);
       document.getElementById('rescan-btn').addEventListener('click', resetScan);
-      
-      // --- Initial Setup ---
       if (!window.DeviceOrientationEvent || !navigator.mediaDevices) {
         permissionError.textContent = "Required browser features (sensors or camera) not supported.";
         permissionOverlay.classList.remove('hidden');
