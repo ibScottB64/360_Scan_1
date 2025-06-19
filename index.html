@@ -33,10 +33,23 @@
  .control-button.enabled:active { transform: translateY(3px); box-shadow: 0 2px 0 0 #004a99; }
  .hidden { display: none; }
  .progress-display { display: flex; align-items: center; gap: 0; padding: 12px; overflow-x: auto; }
- .progress-frame { flex-shrink: 0; height: 50px; width: 37.5px; background-color: var(--secondary-bg); border-radius: 4px; border: 1px solid #CCC; background-size: cover; background-position: center; }
+ .progress-frame { flex-shrink: 0; height: 50px; width: 37.5px; background-color: var(--secondary-bg); border-radius: 4px; border: 1px solid #CCC; background-size: cover; background-position: center; cursor: pointer; }
  .app-status { padding: 16px; text-align: center; font-size: 1.3rem; font-weight: 500; border-top: 1px solid var(--secondary-bg); }
  #permission-overlay { position: fixed; top: 0; left: 0; z-index: 100; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.75); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 20px; box-sizing: border-box; }
  #permission-overlay.hidden { display: none; }
+ #review-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0,0,0,0.9);
+    display: none; /* Changed: Set to none by default to ensure it's hidden on start */
+    justify-content: center; align-items: center;
+    z-index: 200;
+    cursor: pointer;
+ }
+ #review-image {
+    max-width: 95%; max-height: 95%;
+    object-fit: contain;
+ }
  </style>
 </head>
 <body>
@@ -69,12 +82,14 @@
  <h2>Sensor & Camera Access Required</h2><p>This app needs access to your phone's motion sensors and camera to guide you through the scan.</p>
  <button id="permission-button">Allow Access</button><p id="permission-error"></p>
  </div>
+  <div id="review-overlay" class="hidden"><img id="review-image" alt="Reviewed Frame"></div>
 
  <script>
  document.addEventListener('DOMContentLoaded', () => {
   const cameraViewContainer = document.getElementById('camera-view-container');
   const videoElement = document.getElementById('video-feed');
   const targetSVG = document.getElementById('target-svg');
+  const helperSVG = document.getElementById('helper-svg');
   const helperSVGPath = document.querySelector('#helper-svg path');
   const scanControlBtn = document.getElementById('scan-control-btn');
   const resetBtn = document.getElementById('reset-btn');
@@ -82,6 +97,8 @@
   const submitBtn = document.getElementById('submit-btn');
   const appStatus = document.getElementById('app-status');
   const progressDisplay = document.getElementById('progress-display');
+  const reviewOverlay = document.getElementById('review-overlay');
+  const reviewImage = document.getElementById('review-image');
    
   let isAligned = false, alignmentTimer = null;
   let scanState = 'pre-scan'; // 'pre-scan', 'scanning', 'paused', 'complete'
@@ -151,7 +168,25 @@
   const frameDiv = document.createElement('div');
   frameDiv.className = 'progress-frame';
   frameDiv.style.backgroundImage = `url(${frameDataUrl})`;
+   frameDiv.addEventListener('click', () => showReviewImage(frameDataUrl));
   progressDisplay.appendChild(frameDiv);
+  }
+  
+  function showReviewImage(dataUrl) {
+    if (scanState !== 'paused' && scanState !== 'complete') return;
+    reviewImage.src = dataUrl;
+    reviewOverlay.style.display = 'flex';
+    targetSVG.classList.add('hidden');
+    helperSVG.classList.add('hidden');
+  }
+
+  function hideReviewImage() {
+    reviewOverlay.style.display = 'none';
+    // Only show alignment tools again if the scan is not complete.
+    if (scanState !== 'complete') {
+        targetSVG.classList.remove('hidden');
+        helperSVG.classList.remove('hidden');
+    }
   }
 
   // --- Capture Logic ---
@@ -220,6 +255,8 @@
      document.getElementById('scanning-controls').classList.add('hidden');
      document.getElementById('scan-complete-controls').classList.remove('hidden');
      videoElement.pause();
+     targetSVG.classList.add('hidden');
+     helperSVG.classList.add('hidden');
     }
    }
   }
@@ -265,6 +302,9 @@
   scanControlBtn.textContent = 'Start';
   submitBtn.disabled = false;
   rescanBtn.disabled = false;
+  reviewOverlay.style.display = 'none'; 
+  targetSVG.classList.remove('hidden'); 
+  helperSVG.classList.remove('hidden');
   videoElement.play();
   setAlignedState(false); 
   }
@@ -288,11 +328,12 @@
    }
   } else if (scanState === 'scanning') {
    scanState = 'paused';
-   appStatus.textContent = 'Paused';
+   appStatus.textContent = 'Paused. Tap a frame to review.';
    scanControlBtn.textContent = 'Resume';
    resetBtn.classList.remove('hidden');
    videoElement.pause();
   } else if (scanState === 'paused') {
+   hideReviewImage(); // Ensure review is hidden before resuming.
    scanState = 'scanning';
    appStatus.textContent = 'Rotate slowly to your right';
    scanControlBtn.textContent = 'Pause';
@@ -303,6 +344,7 @@
 
   resetBtn.addEventListener('click', resetScan);
   rescanBtn.addEventListener('click', resetScan);
+    reviewOverlay.addEventListener('click', hideReviewImage);
 
     submitBtn.addEventListener('click', async () => {
         if (capturedFrames.length === 0) {
