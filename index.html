@@ -55,7 +55,10 @@
        <button class="control-button" id="scan-control-btn" disabled>Start</button>
        <button class="control-button enabled hidden" id="reset-btn" style="margin-top: 12px;">Reset</button>
      </div>
-    <div id="scan-complete-controls" class="hidden"><button class="control-button enabled" id="rescan-btn">Rescan</button><button class="control-button enabled" id="submit-btn">Submit</button></div>
+    <div id="scan-complete-controls" class="hidden">
+       <button class="control-button enabled" id="rescan-btn" style="margin-bottom: 12px;">Rescan</button>
+       <button class="control-button enabled" id="submit-btn">Submit</button>
+    </div>
    </div>
   </div>
   <div class="progress-display" id="progress-display"></div>
@@ -84,14 +87,13 @@
    let videoStream = null;
    const canvas = document.createElement('canvas');
 
-
    const ALIGNMENT_TOLERANCE = 16;
    const ALIGNMENT_HOLD_TIME = 1000;
    const TARGET_PITCH = 80;
    const DEGREES_PER_FRAME = 30;
    const TOTAL_FRAMES = 360 / DEGREES_PER_FRAME;
 
-   let currentHeading = 0, startHeading = 0;
+   let currentHeading = 0, startHeading = 0, lastCaptureHeading = 0;
    let smoothedRoll = 0;
    const SMOOTHING_FACTOR = 0.1;
 
@@ -168,7 +170,7 @@
     let { alpha, beta, gamma } = event;
     if (alpha === null || beta === null || gamma === null) return;
     
-    currentHeading = alpha;
+    currentHeading = alpha; // Store the current compass heading
 
     let yTranslatePercent = 0;
     if (beta <= TARGET_PITCH) { const progress = beta / TARGET_PITCH; yTranslatePercent = -50 + (progress * 50); } 
@@ -193,18 +195,17 @@
        if (isAligned) { setAlignedState(false); }
       }
     } else if (scanState === 'scanning') {
-      const totalRotation = (currentHeading - startHeading + 360) % 360;
-      const nextTargetDegrees = (capturedFrames.length) * DEGREES_PER_FRAME;
-
-      if (capturedFrames.length < TOTAL_FRAMES && totalRotation >= nextTargetDegrees) {
-        captureFrame();
-        if (capturedFrames.length >= TOTAL_FRAMES) {
-          scanState = 'complete';
-          appStatus.textContent = 'Scan Complete';
-          document.getElementById('scanning-controls').classList.add('hidden');
-          document.getElementById('scan-complete-controls').classList.remove('hidden');
-          videoElement.pause();
-        }
+      const degreesRotatedSinceLastCapture = (currentHeading - lastCaptureHeading + 360) % 360;
+      if (degreesRotatedSinceLastCapture >= DEGREES_PER_FRAME) {
+       captureFrame();
+       lastCaptureHeading = currentHeading;
+       if (capturedFrames.length >= TOTAL_FRAMES) {
+        scanState = 'complete';
+        appStatus.textContent = 'Scan Complete';
+        document.getElementById('scanning-controls').classList.add('hidden');
+        document.getElementById('scan-complete-controls').classList.remove('hidden');
+        videoElement.pause();
+       }
       }
     }
    }
@@ -246,7 +247,7 @@
     resetBtn.classList.add('hidden');
     scanControlBtn.textContent = 'Start';
     videoElement.play();
-    setAlignedState(false);
+    setAlignedState(false); 
    }
 
    // --- Button Event Listeners ---
@@ -256,7 +257,7 @@
       appStatus.textContent = 'Rotate slowly to your right';
       scanControlBtn.textContent = 'Pause';
       startHeading = currentHeading;
-      captureFrame(); // Capture the first frame at 0 degrees rotation.
+      lastCaptureHeading = currentHeading;
     } else if (scanState === 'scanning') {
       scanState = 'paused';
       appStatus.textContent = 'Paused';
