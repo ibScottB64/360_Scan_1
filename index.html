@@ -55,6 +55,17 @@
     max-width: none; max-height: none;
     cursor: zoom-out;
  }
+ #review-instructions {
+    position: absolute;
+    bottom: 20px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: rgba(255,255,255,0.8);
+    font-size: 1rem;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    pointer-events: none; /* Make sure text doesn't block gestures */
+ }
  </style>
 </head>
 <body>
@@ -87,7 +98,10 @@
  <h2>Sensor & Camera Access Required</h2><p>This app needs access to your phone's motion sensors and camera to guide you through the scan.</p>
  <button id="permission-button">Allow Access</button><p id="permission-error"></p>
  </div>
-  <div id="review-overlay" class="hidden"><img id="review-image" alt="Reviewed Frame"></div>
+  <div id="review-overlay" class="hidden">
+      <img id="review-image" alt="Reviewed Frame">
+      <p id="review-instructions">Tap to Exit | Double-Tap to Zoom | Swipe to Scroll</p>
+  </div>
 
  <script>
  document.addEventListener('DOMContentLoaded', () => {
@@ -104,12 +118,14 @@
   const progressDisplay = document.getElementById('progress-display');
   const reviewOverlay = document.getElementById('review-overlay');
   const reviewImage = document.getElementById('review-image');
+  const reviewInstructions = document.getElementById('review-instructions');
    
   let isAligned = false, alignmentTimer = null;
   let scanState = 'pre-scan'; // 'pre-scan', 'scanning', 'paused', 'complete'
   let capturedFrames = [];
   let videoStream = null;
-  const canvas = document.createElement('canvas');
+  let imageCaptureController = null;
+  let isCapturing = false;
 
   const ALIGNMENT_TOLERANCE = 16;
   const ALIGNMENT_HOLD_TIME = 1000;
@@ -122,10 +138,11 @@
   let smoothedRoll = 0;
   const SMOOTHING_FACTOR = 0.1;
   let currentReviewIndex = -1;
-  let touchStartX = 0;
+  let touchStartX = 0, touchStartY = 0;
   let isZoomed = false;
   let tapTimer = null;
   const DOUBLE_TAP_DELAY = 300; // ms
+  const GESTURE_THRESHOLD = 50; // Min distance for a swipe/pan
 
   // --- Permission Handling (unchanged part) ---
   const permissionOverlay = document.getElementById('permission-overlay');
@@ -138,6 +155,14 @@
     video: { facingMode: 'environment' }
    });
    videoElement.srcObject = videoStream;
+
+    if ('ImageCapture' in window) {
+        const videoTrack = videoStream.getVideoTracks()[0];
+        imageCaptureController = new ImageCapture(videoTrack);
+    } else {
+        console.warn("ImageCapture API not supported. Falling back to lower quality captures.");
+    }
+
    videoElement.onloadedmetadata = () => {
     const { videoWidth, videoHeight } = videoElement;
     const aspectRatio = videoHeight / videoWidth;
@@ -185,7 +210,18 @@
   function toggleZoom() {
       isZoomed = !isZoomed;
       reviewImage.classList.toggle('zoomed-in', isZoomed);
-      if (!isZoomed) {
+      reviewInstructions.style.display = isZoomed ? 'none' : 'block';
+      
+      if (isZoomed) {
+          reviewOverlay.style.justifyContent = 'flex-start';
+          reviewOverlay.style.alignItems = 'flex-start';
+          requestAnimationFrame(() => {
+            reviewOverlay.scrollLeft = (reviewImage.scrollWidth - reviewOverlay.clientWidth) / 2;
+            reviewOverlay.scrollTop = (reviewImage.scrollHeight - reviewOverlay.clientHeight) / 2;
+          });
+      } else {
+          reviewOverlay.style.justifyContent = 'center';
+          reviewOverlay.style.alignItems = 'center';
           reviewOverlay.scrollTop = 0;
           reviewOverlay.scrollLeft = 0;
       }
@@ -216,25 +252,44 @@
   }
 
   // --- Capture Logic ---
-  function captureFrame() {
-  if (!videoStream) return;
-  const { videoWidth, videoHeight } = videoElement;
-  canvas.width = videoWidth;
-  canvas.height = videoHeight;
-  const context = canvas.getContext('2d');
-  context.drawImage(videoElement, 0, 0, videoWidth, videoHeight);
-  const dataUrl = canvas.toDataURL('image/jpeg');
-  capturedFrames.push(dataUrl);
-  updateProgressDisplay(dataUrl, capturedFrames.length - 1);
-  console.log(`Frame captured. Total frames: ${capturedFrames.length}`);
-  }
+    async function captureFrame() {
+        if (!imageCaptureController) {
+            console.error("Image Capture not available.");
+            // Fallback for browsers that don't support ImageCapture, using canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            canvas.getContext('2d').drawImage(videoElement, 0, 0);
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            capturedFrames.push(dataUrl);
+            updateProgressDisplay(dataUrl, capturedFrames.length - 1);
+            console.warn(`Low-res frame captured (fallback). Total frames: ${capturedFrames.length}`);
+            return;
+        }
+
+        try {
+            const blob = await imageCaptureController.takePhoto();
+            const dataUrl = await new Promise(resolve => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+            capturedFrames.push(dataUrl);
+            updateProgressDisplay(dataUrl, capturedFrames.length - 1);
+            console.log(`High-res frame captured. Total frames: ${capturedFrames.length}`);
+        } catch (error) {
+            console.error('takePhoto() error:', error);
+        }
+    }
 
   // --- Core Logic ---
-  function handleOrientation(event) {
+  async function handleOrientation(event) {
   let { alpha, beta, gamma } = event;
   if (alpha === null || beta === null || gamma === null) return;
    
   currentHeading = alpha; // Store the current compass heading
+
+  if (isCapturing) return; // Don't update UI guides while a photo is being processed.
 
   let yTranslatePercent = 0;
   if (beta <= TARGET_PITCH) { const progress = beta / TARGET_PITCH; yTranslatePercent = -50 + (progress * 50); } 
@@ -272,19 +327,21 @@
    const CAPTURE_WINDOW_DEGREES = 5.0;
 
    if (Math.abs(diff) < CAPTURE_WINDOW_DEGREES) {
-    captureFrame();
-    nextHeadingIndex++; // Immediately look for the next target to avoid double caps
+        isCapturing = true; // Set the lock
+        await captureFrame();
+        nextHeadingIndex++; // Immediately look for the next target to avoid double caps
 
-    if (capturedFrames.length >= TOTAL_FRAMES) {
-     scanState = 'complete';
-     appStatus.textContent = 'Scan Complete';
-     document.getElementById('scanning-controls').classList.add('hidden');
-     document.getElementById('scan-complete-controls').classList.remove('hidden');
-     videoElement.pause();
-     targetSVG.classList.add('hidden');
-     helperSVG.classList.add('hidden');
+        if (capturedFrames.length >= TOTAL_FRAMES) {
+            scanState = 'complete';
+            appStatus.textContent = 'Scan Complete';
+            document.getElementById('scanning-controls').classList.add('hidden');
+            document.getElementById('scan-complete-controls').classList.remove('hidden');
+            videoElement.pause();
+             targetSVG.classList.add('hidden');
+             helperSVG.classList.add('hidden');
+        }
+        isCapturing = false; // Release the lock
     }
-   }
   }
   }
 
@@ -321,6 +378,7 @@
   capturedFrames = [];
   targetHeadings = [];
   nextHeadingIndex = 0;
+  isCapturing = false; // Ensure lock is released on reset
   progressDisplay.innerHTML = '';
   document.getElementById('scanning-controls').classList.remove('hidden');
   document.getElementById('scan-complete-controls').classList.add('hidden');
@@ -337,14 +395,17 @@
   }
 
   // --- Button Event Listeners ---
-  scanControlBtn.addEventListener('click', () => {
-  if (scanState === 'pre-scan') {
+  scanControlBtn.addEventListener('click', async () => {
+  if (scanState === 'pre-scan' || isCapturing) {
+    if (isCapturing) return; // Prevent multiple clicks while first frame is processing
    scanState = 'scanning';
    appStatus.textContent = 'Rotate slowly to your right';
    scanControlBtn.textContent = 'Pause';
    startHeading = currentHeading;
 
-   captureFrame(); // Capture the first frame immediately on start.
+    isCapturing = true;
+   await captureFrame(); // Capture the first frame immediately on start.
+    isCapturing = false;
 
    targetHeadings = [];
    nextHeadingIndex = 0;
@@ -373,45 +434,43 @@
   rescanBtn.addEventListener('click', resetScan);
 
   reviewOverlay.addEventListener('touchstart', (e) => {
-    // We only need to record the start position for swipe detection
-    if (!isZoomed) {
-        touchStartX = e.changedTouches[0].screenX;
-    }
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
   }, { passive: true });
 
   reviewOverlay.addEventListener('touchend', (e) => {
-    e.preventDefault(); // Prevent ghost clicks
+    e.preventDefault(); 
     
+    const touchEndX = e.changedTouches[0].screenX;
+    const touchEndY = e.changedTouches[0].screenY;
+    const deltaX = touchEndX - touchStartX;
+    const deltaY = touchEndY - touchStartY;
+    const isPan = Math.abs(deltaX) > GESTURE_THRESHOLD || Math.abs(deltaY) > GESTURE_THRESHOLD;
+
     if (isZoomed) {
-        // If zoomed in, any tap will zoom out.
-        toggleZoom();
+        if (!isPan) {
+            toggleZoom();
+        }
         return;
     }
-
-    const touchEndX = e.changedTouches[0].screenX;
-    const deltaX = touchEndX - touchStartX;
-    const SWIPE_THRESHOLD = 50;
-    const isSwipe = Math.abs(deltaX) > SWIPE_THRESHOLD;
-
-    if (isSwipe) {
+    
+    if (isPan) {
         clearTimeout(tapTimer);
         tapTimer = null;
-        if (deltaX < 0) { // Swipe Left
+        if (deltaX < -GESTURE_THRESHOLD) { // Swipe Left
             currentReviewIndex = (currentReviewIndex + 1) % capturedFrames.length;
-        } else { // Swipe Right
+        } else if (deltaX > GESTURE_THRESHOLD) { // Swipe Right
             currentReviewIndex = (currentReviewIndex - 1 + capturedFrames.length) % capturedFrames.length;
         }
         reviewImage.src = capturedFrames[currentReviewIndex];
     } else {
         // It's a tap. Check for double-tap.
         if (tapTimer === null) {
-            // First tap, set a timer to act on a single tap.
             tapTimer = setTimeout(() => {
-                tapTimer = null; // reset timer
+                tapTimer = null;
                 hideReviewImage();
             }, DOUBLE_TAP_DELAY);
         } else {
-            // Second tap arrived within the delay, it's a double-tap.
             clearTimeout(tapTimer);
             tapTimer = null;
             toggleZoom();
