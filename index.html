@@ -168,7 +168,7 @@
     let { alpha, beta, gamma } = event;
     if (alpha === null || beta === null || gamma === null) return;
     
-    currentHeading = alpha; // Store the current compass heading
+    currentHeading = alpha;
 
     let yTranslatePercent = 0;
     if (beta <= TARGET_PITCH) { const progress = beta / TARGET_PITCH; yTranslatePercent = -50 + (progress * 50); } 
@@ -194,11 +194,10 @@
       }
     } else if (scanState === 'scanning') {
       const totalRotation = (currentHeading - startHeading + 360) % 360;
-      const nextTargetDegrees = capturedFrames.length * DEGREES_PER_FRAME;
-      
+      const nextTargetDegrees = (capturedFrames.length) * DEGREES_PER_FRAME;
+
       if (capturedFrames.length < TOTAL_FRAMES && totalRotation >= nextTargetDegrees) {
         captureFrame();
-
         if (capturedFrames.length >= TOTAL_FRAMES) {
           scanState = 'complete';
           appStatus.textContent = 'Scan Complete';
@@ -247,7 +246,7 @@
     resetBtn.classList.add('hidden');
     scanControlBtn.textContent = 'Start';
     videoElement.play();
-    setAlignedState(false); 
+    setAlignedState(false);
    }
 
    // --- Button Event Listeners ---
@@ -257,7 +256,7 @@
       appStatus.textContent = 'Rotate slowly to your right';
       scanControlBtn.textContent = 'Pause';
       startHeading = currentHeading;
-      captureFrame(); // Capture the first frame immediately
+      captureFrame(); // Capture the first frame at 0 degrees rotation.
     } else if (scanState === 'scanning') {
       scanState = 'paused';
       appStatus.textContent = 'Paused';
