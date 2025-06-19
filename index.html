@@ -275,7 +275,9 @@
    targetHeadings = [];
    nextHeadingIndex = 0;
    for (let i = 0; i < TOTAL_FRAMES; i++) {
-    targetHeadings.push((startHeading + (i + 1) * DEGREES_PER_FRAME) % 360);
+        // CHANGED: Subtracting degrees to reverse rotation direction for devices with inverted sensors.
+        const nextTarget = startHeading - ((i + 1) * DEGREES_PER_FRAME);
+        targetHeadings.push((nextTarget % 360 + 360) % 360);
    }
   } else if (scanState === 'scanning') {
    scanState = 'paused';
