@@ -41,14 +41,19 @@
     position: fixed;
     top: 0; left: 0; width: 100%; height: 100%;
     background-color: rgba(0,0,0,0.9);
-    display: none; /* Changed: Set to none by default to ensure it's hidden on start */
+    display: none;
     justify-content: center; align-items: center;
     z-index: 200;
-    cursor: pointer;
+    overflow: auto; /* Enable panning when zoomed */
  }
  #review-image {
     max-width: 95%; max-height: 95%;
     object-fit: contain;
+    cursor: pointer;
+ }
+ #review-image.zoomed-in {
+    max-width: none; max-height: none;
+    cursor: zoom-out;
  }
  </style>
 </head>
@@ -116,6 +121,11 @@
   let targetHeadings = [], nextHeadingIndex = 0;
   let smoothedRoll = 0;
   const SMOOTHING_FACTOR = 0.1;
+  let currentReviewIndex = -1;
+  let touchStartX = 0;
+  let isZoomed = false;
+  let tapTimer = null;
+  const DOUBLE_TAP_DELAY = 300; // ms
 
   // --- Permission Handling (unchanged part) ---
   const permissionOverlay = document.getElementById('permission-overlay');
@@ -164,24 +174,40 @@
   }
 
   // --- Progress Display Logic ---
-  function updateProgressDisplay(frameDataUrl) {
+  function updateProgressDisplay(dataUrl, index) {
   const frameDiv = document.createElement('div');
   frameDiv.className = 'progress-frame';
-  frameDiv.style.backgroundImage = `url(${frameDataUrl})`;
-   frameDiv.addEventListener('click', () => showReviewImage(frameDataUrl));
+  frameDiv.style.backgroundImage = `url(${dataUrl})`;
+   frameDiv.addEventListener('click', () => showReviewImage(index));
   progressDisplay.appendChild(frameDiv);
   }
   
-  function showReviewImage(dataUrl) {
-    if (scanState !== 'paused' && scanState !== 'complete') return;
-    reviewImage.src = dataUrl;
+  function toggleZoom() {
+      isZoomed = !isZoomed;
+      reviewImage.classList.toggle('zoomed-in', isZoomed);
+      if (!isZoomed) {
+          reviewOverlay.scrollTop = 0;
+          reviewOverlay.scrollLeft = 0;
+      }
+  }
+
+  function showReviewImage(index) {
+    if ((scanState !== 'paused' && scanState !== 'complete') || index < 0 || index >= capturedFrames.length) return;
+    currentReviewIndex = index;
+    reviewImage.src = capturedFrames[currentReviewIndex];
     reviewOverlay.style.display = 'flex';
     targetSVG.classList.add('hidden');
     helperSVG.classList.add('hidden');
   }
 
   function hideReviewImage() {
+    clearTimeout(tapTimer);
+    tapTimer = null;
     reviewOverlay.style.display = 'none';
+    currentReviewIndex = -1;
+    if (isZoomed) {
+        toggleZoom(); // Ensure we are un-zoomed when hiding
+    }
     // Only show alignment tools again if the scan is not complete.
     if (scanState !== 'complete') {
         targetSVG.classList.remove('hidden');
@@ -199,7 +225,7 @@
   context.drawImage(videoElement, 0, 0, videoWidth, videoHeight);
   const dataUrl = canvas.toDataURL('image/jpeg');
   capturedFrames.push(dataUrl);
-  updateProgressDisplay(dataUrl);
+  updateProgressDisplay(dataUrl, capturedFrames.length - 1);
   console.log(`Frame captured. Total frames: ${capturedFrames.length}`);
   }
 
@@ -303,6 +329,7 @@
   submitBtn.disabled = false;
   rescanBtn.disabled = false;
   reviewOverlay.style.display = 'none'; 
+  currentReviewIndex = -1;
   targetSVG.classList.remove('hidden'); 
   helperSVG.classList.remove('hidden');
   videoElement.play();
@@ -344,7 +371,53 @@
 
   resetBtn.addEventListener('click', resetScan);
   rescanBtn.addEventListener('click', resetScan);
-    reviewOverlay.addEventListener('click', hideReviewImage);
+
+  reviewOverlay.addEventListener('touchstart', (e) => {
+    // We only need to record the start position for swipe detection
+    if (!isZoomed) {
+        touchStartX = e.changedTouches[0].screenX;
+    }
+  }, { passive: true });
+
+  reviewOverlay.addEventListener('touchend', (e) => {
+    e.preventDefault(); // Prevent ghost clicks
+    
+    if (isZoomed) {
+        // If zoomed in, any tap will zoom out.
+        toggleZoom();
+        return;
+    }
+
+    const touchEndX = e.changedTouches[0].screenX;
+    const deltaX = touchEndX - touchStartX;
+    const SWIPE_THRESHOLD = 50;
+    const isSwipe = Math.abs(deltaX) > SWIPE_THRESHOLD;
+
+    if (isSwipe) {
+        clearTimeout(tapTimer);
+        tapTimer = null;
+        if (deltaX < 0) { // Swipe Left
+            currentReviewIndex = (currentReviewIndex + 1) % capturedFrames.length;
+        } else { // Swipe Right
+            currentReviewIndex = (currentReviewIndex - 1 + capturedFrames.length) % capturedFrames.length;
+        }
+        reviewImage.src = capturedFrames[currentReviewIndex];
+    } else {
+        // It's a tap. Check for double-tap.
+        if (tapTimer === null) {
+            // First tap, set a timer to act on a single tap.
+            tapTimer = setTimeout(() => {
+                tapTimer = null; // reset timer
+                hideReviewImage();
+            }, DOUBLE_TAP_DELAY);
+        } else {
+            // Second tap arrived within the delay, it's a double-tap.
+            clearTimeout(tapTimer);
+            tapTimer = null;
+            toggleZoom();
+        }
+    }
+  });
 
     submitBtn.addEventListener('click', async () => {
         if (capturedFrames.length === 0) {
