@@ -4,6 +4,7 @@
  <meta charset="UTF-8">
  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
  <title>360 Room Scan</title>
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
  <style>
  /* CSS is unchanged */
  :root {
@@ -78,6 +79,7 @@
   const scanControlBtn = document.getElementById('scan-control-btn');
   const resetBtn = document.getElementById('reset-btn');
   const rescanBtn = document.getElementById('rescan-btn');
+  const submitBtn = document.getElementById('submit-btn');
   const appStatus = document.getElementById('app-status');
   const progressDisplay = document.getElementById('progress-display');
    
@@ -261,6 +263,8 @@
   document.getElementById('scan-complete-controls').classList.add('hidden');
   resetBtn.classList.add('hidden');
   scanControlBtn.textContent = 'Start';
+  submitBtn.disabled = false;
+  rescanBtn.disabled = false;
   videoElement.play();
   setAlignedState(false); 
   }
@@ -277,7 +281,7 @@
 
    targetHeadings = [];
    nextHeadingIndex = 0;
-   // Prepare the remaining 11 target headings.
+   // Prepare the remaining target headings.
    for (let i = 0; i < TOTAL_FRAMES - 1; i++) {
         const nextTarget = startHeading - ((i + 1) * DEGREES_PER_FRAME);
         targetHeadings.push((nextTarget % 360 + 360) % 360);
@@ -299,6 +303,51 @@
 
   resetBtn.addEventListener('click', resetScan);
   rescanBtn.addEventListener('click', resetScan);
+
+    submitBtn.addEventListener('click', async () => {
+        if (capturedFrames.length === 0) {
+            appStatus.textContent = "No frames to submit!";
+            return;
+        }
+
+        appStatus.textContent = "Zipping files...";
+        submitBtn.disabled = true;
+        rescanBtn.disabled = true;
+
+        try {
+            const zip = new JSZip();
+            capturedFrames.forEach((dataUrl, index) => {
+                // Pad index for consistent file naming (e.g., image_01.jpg)
+                const paddedIndex = String(index + 1).padStart(2, '0');
+                // Get raw base64 data by removing the data URL prefix
+                const base64Data = dataUrl.substring(dataUrl.indexOf(',') + 1);
+                zip.file(`image_${paddedIndex}.jpg`, base64Data, { base64: true });
+            });
+
+            const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+            
+            // Create a link to download the zip file
+            const downloadLink = document.createElement('a');
+            const url = URL.createObjectURL(zipBlob);
+            downloadLink.href = url;
+            downloadLink.download = 'room_scan.zip';
+            
+            // Trigger the download
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+
+            // Clean up the object URL
+            URL.revokeObjectURL(url);
+            
+            appStatus.textContent = "Download started!";
+        } catch(err) {
+            console.error("Error creating zip file:", err);
+            appStatus.textContent = "Error creating file!";
+            submitBtn.disabled = false;
+            rescanBtn.disabled = false;
+        }
+    });
 
   // --- Initial Setup ---
   if (!window.DeviceOrientationEvent || !navigator.mediaDevices) {
