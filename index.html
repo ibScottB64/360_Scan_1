@@ -59,8 +59,7 @@
             <button class="control-button enabled" id="rescan-btn">Rescan</button>
             <button class="control-button enabled" id="submit-btn" style="margin-top: 12px;">Submit</button>
           </div>
-      </div>
-    </div>
+     .</div>
     <div class="progress-display" id="progress-display"></div>
     <footer class="app-status" id="app-status">Align to Start</footer>
   </div>
@@ -74,6 +73,7 @@
       const cameraViewContainer = document.getElementById('camera-view-container');
       const videoElement = document.getElementById('video-feed');
       const targetSVG = document.getElementById('target-svg');
+      const helperSVG = document.getElementById('helper-svg');
       const helperSVGPath = document.querySelector('#helper-svg path');
       const scanControlBtn = document.getElementById('scan-control-btn');
       const resetBtn = document.getElementById('reset-btn');
@@ -83,7 +83,7 @@
       const progressDisplay = document.getElementById('progress-display');
        
       let isAligned = false, alignmentTimer = null;
-      let scanState = 'pre-scan'; // 'pre-scan', 'scanning', 'paused', 'complete'
+      let scanState = 'pre-scan';
       let capturedFrames = [];
       let videoStream = null;
       let initialYaw = null;
@@ -99,46 +99,14 @@
       let smoothedRoll = 0;
       const SMOOTHING_FACTOR = 0.1;
 
-      // --- Permission Handling & Initialization ---
+      // --- Permission Handling & Initialization (Unchanged) ---
       const permissionOverlay = document.getElementById('permission-overlay');
       const permissionBtn = document.getElementById('permission-button');
       const permissionError = document.getElementById('permission-error');
-      
-      async function initializeApp() {
-        try {
-            videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-            videoElement.srcObject = videoStream;
-            videoElement.onloadedmetadata = () => {
-                const { videoWidth, videoHeight } = videoElement;
-                const aspectRatio = videoHeight / videoWidth;
-                cameraViewContainer.style.setProperty('--aspect-ratio', aspectRatio);
-                cameraViewContainer.style.paddingBottom = `calc(100% * var(--aspect-ratio, 1.3333))`;
-            };
-            startListening(); 
-        } catch (err) {
-            console.error("Camera error:", err);
-            permissionError.textContent = "Camera access denied or unavailable. Please check permissions and refresh.";
-            permissionBtn.disabled = true;
-            permissionOverlay.classList.remove('hidden');
-        }
-      }
+      async function initializeApp() { try { videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); videoElement.srcObject = videoStream; videoElement.onloadedmetadata = () => { const { videoWidth, videoHeight } = videoElement; const aspectRatio = videoHeight / videoWidth; cameraViewContainer.style.setProperty('--aspect-ratio', aspectRatio); cameraViewContainer.style.paddingBottom = `calc(100% * var(--aspect-ratio, 1.3333))`; }; startListening(); } catch (err) { console.error("Camera error:", err); permissionError.textContent = "Camera access denied or unavailable. Please check permissions and refresh."; permissionBtn.disabled = true; permissionOverlay.classList.remove('hidden'); } }
       function startListening() { window.addEventListener('deviceorientation', handleOrientation); permissionOverlay.classList.add('hidden'); }
-      function handlePermission() {
-        if (navigator.permissions && typeof navigator.permissions.query === 'function') {
-          navigator.permissions.query({ name: 'accelerometer' }).then(result => {
-            if (result.state === 'granted') { initializeApp(); }
-            else if (result.state === 'prompt') { permissionBtn.onclick = requestSensorAccess; }
-            else if (result.state === 'denied') { permissionError.textContent = "Sensor access denied."; permissionBtn.disabled = true; }
-          });
-        } else { permissionBtn.onclick = requestSensorAccess; }
-      }
-      function requestSensorAccess() {
-        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-          DeviceOrientationEvent.requestPermission().then(state => {
-            if (state === 'granted') { initializeApp(); } else { permissionError.textContent = "Permission denied."; }
-          }).catch(console.error);
-        } else { initializeApp(); }
-      }
+      function handlePermission() { if (navigator.permissions && typeof navigator.permissions.query === 'function') { navigator.permissions.query({ name: 'accelerometer' }).then(result => { if (result.state === 'granted') { initializeApp(); } else if (result.state === 'prompt') { permissionBtn.onclick = requestSensorAccess; } else if (result.state === 'denied') { permissionError.textContent = "Sensor access denied."; permissionBtn.disabled = true; } }); } else { permissionBtn.onclick = requestSensorAccess; } }
+      function requestSensorAccess() { if (typeof DeviceOrientationEvent.requestPermission === 'function') { DeviceOrientationEvent.requestPermission().then(state => { if (state === 'granted') { initializeApp(); } else { permissionError.textContent = "Permission denied."; } }).catch(console.error); } else { initializeApp(); } }
       
       // --- Other Functions (Unchanged) ---
       function updateProgressDisplay(frameDataUrl) { const frameDiv = document.createElement('div'); frameDiv.className = 'progress-frame'; frameDiv.style.backgroundImage = `url(${frameDataUrl})`; progressDisplay.appendChild(frameDiv); progressDisplay.scrollLeft = progressDisplay.scrollWidth; }
@@ -179,13 +147,14 @@
             xTranslatePercent = -yawError * YAW_SENSITIVITY;
         }
 
-        const finalRotationRad = finalRotation * Math.PI / 180;
-        const cosR = Math.cos(finalRotationRad);
-        const sinR = Math.sin(finalRotationRad);
-        const tx = xTranslatePercent * cosR + yTranslatePercent * sinR;
-        const ty = -xTranslatePercent * sinR + yTranslatePercent * cosR;
-        
-        targetSVG.style.transform = `translate(calc(-50% + ${tx}%), calc(-50% + ${ty}%)) rotate(${finalRotation}deg)`;
+        // Compensate for rotation to prevent skewing
+        const rotationRad = finalRotation * Math.PI / 180;
+        const screenX = xTranslatePercent * Math.cos(rotationRad) + yTranslatePercent * Math.sin(rotationRad);
+        const screenY = -xTranslatePercent * Math.sin(rotationRad) + yTranslatePercent * Math.cos(rotationRad);
+
+        targetSVG.style.transform = `translate(calc(-50% + ${screenX}%), calc(-50% + ${screenY}%)) rotate(${finalRotation}deg)`;
+        helperSVG.style.transform = `translate(calc(-50% + ${screenX}%), calc(-50% + ${screenY}%)) scale(0.8) rotate(${finalRotation}deg)`;
+
         const misalignment = Math.sqrt(Math.pow(pitchOffset, 2) + Math.pow(rollOffset, 2) + Math.pow(yawError, 2));
         helperSVGPath.style.fill = getGradientColor(misalignment);
          
@@ -211,7 +180,7 @@
         }
       }
 
-      // --- Button Event Listeners & Initial Setup ---
+      // --- Button Event Listeners & Initial Setup (Unchanged) ---
       scanControlBtn.addEventListener('click', () => { if (scanState === 'pre-scan') { scanState = 'scanning'; captureFrame(); scanControlBtn.textContent = 'Pause'; } else if (scanState === 'scanning') { scanState = 'paused'; appStatus.textContent = 'Paused'; scanControlBtn.textContent = 'Resume'; resetBtn.classList.remove('hidden'); videoElement.pause(); } else if (scanState === 'paused') { scanState = 'scanning'; appStatus.textContent = 'Scanning'; scanControlBtn.textContent = 'Pause'; resetBtn.classList.add('hidden'); videoElement.play(); } });
       resetBtn.addEventListener('click', resetScan);
       document.getElementById('rescan-btn').addEventListener('click', resetScan);
